@@ -1,0 +1,1850 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Infinite Note - 無限キャンバス手書きメモ帳</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter & Noto Sans JP -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            touch-action: none; /* ブラウザ標準のピンチズームやスワイプ戻りを無効化 */
+            background-color: #f8fafc;
+        }
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* 上部ツールバーの開閉スライドアニメーション */
+        #toolbar-wrapper {
+            transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease;
+        }
+        #toolbar-wrapper.toolbar-hidden {
+            transform: translate(-50%, -130%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        /* メニュー開閉トグルピルのアニメーション */
+        #menu-toggle-pill {
+            transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease, opacity 0.2s ease;
+        }
+        @keyframes slideUpFade {
+            0% { opacity: 0; transform: translate(-50%, 16px); }
+            100% { opacity: 1; transform: translate(-50%, 0); }
+        }
+        .toast-enter {
+            animation: slideUpFade 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
+</head>
+<body class="relative text-slate-800">
+
+    <!-- メイン描画キャンバス -->
+    <canvas id="canvas"></canvas>
+
+    <!-- 上部ツールバー開閉トグルボタン（メニュー収納時にも常にアクセス可能） -->
+    <button id="menu-toggle-pill" class="fixed top-2.5 right-3 z-40 flex items-center gap-1.5 bg-white/90 hover:bg-white backdrop-blur-md shadow-md shadow-slate-900/10 border border-slate-200/90 rounded-full px-3 py-1.5 text-xs font-semibold text-slate-700 active:scale-95" title="ツールバーの表示 / 非表示 (M)">
+        <i id="menu-toggle-icon" data-lucide="chevron-up" class="w-4 h-4 text-blue-600"></i>
+        <span id="menu-toggle-label" class="hidden sm:inline">メニュー隠す</span>
+    </button>
+
+    <!-- 上部フローティングツールバー -->
+    <header id="toolbar-wrapper" class="fixed top-3 left-1/2 -translate-x-1/2 z-30 max-w-[94vw] sm:max-w-[90vw]">
+        <div class="flex items-center gap-1 sm:gap-1.5 bg-white/95 backdrop-blur-md shadow-lg shadow-slate-900/10 border border-slate-200/80 rounded-2xl p-1.5 overflow-x-auto no-scrollbar">
+            
+            <!-- ツール切り替えグループ -->
+            <div class="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl shrink-0">
+                <button id="tool-pen" data-tool="pen" class="tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-blue-600 text-white shadow-sm" title="ペン (P)">
+                    <i data-lucide="pen-tool" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">ペン</span>
+                </button>
+                <button id="tool-eraser" data-tool="eraser" class="tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-white/80 transition-all" title="線消しゴム (E)">
+                    <i data-lucide="eraser" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">線消し</span>
+                </button>
+                <button id="tool-lasso" data-tool="lasso" class="tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-white/80 transition-all" title="投げ縄選択 (L)">
+                    <i data-lucide="lasso" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">範囲選択</span>
+                </button>
+                <button id="tool-pan" data-tool="pan" class="tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-white/80 transition-all" title="手のひら移動 (H / Space)">
+                    <i data-lucide="hand" class="w-4 h-4"></i>
+                    <span class="hidden md:inline">移動</span>
+                </button>
+            </div>
+
+            <div class="h-6 w-px bg-slate-200 mx-0.5 shrink-0"></div>
+
+            <!-- ペンの色＆太さ設定 -->
+            <div id="pen-options" class="flex items-center gap-1.5 px-1 shrink-0">
+                <div class="flex items-center gap-1" id="color-palette">
+                    <button data-color="#1e293b" class="color-btn w-6 h-6 rounded-full bg-slate-800 ring-2 ring-offset-2 ring-blue-500 transition-transform scale-110" title="ブラック"></button>
+                    <button data-color="#ef4444" class="color-btn w-6 h-6 rounded-full bg-red-500 hover:scale-110 transition-transform" title="レッド"></button>
+                    <button data-color="#2563eb" class="color-btn w-6 h-6 rounded-full bg-blue-600 hover:scale-110 transition-transform" title="ブルー"></button>
+                    <button data-color="#16a34a" class="color-btn w-6 h-6 rounded-full bg-green-600 hover:scale-110 transition-transform" title="グリーン"></button>
+                    <button data-color="#f59e0b" class="color-btn w-6 h-6 rounded-full bg-amber-500 hover:scale-110 transition-transform" title="オレンジ"></button>
+                </div>
+                <label class="relative w-6 h-6 rounded-full overflow-hidden border border-slate-300 cursor-pointer flex items-center justify-center bg-gradient-to-tr from-pink-500 via-purple-500 to-cyan-500 hover:scale-110 transition-transform" title="カスタムカラー">
+                    <input type="color" id="custom-color-input" value="#1e293b" class="opacity-0 absolute inset-0 w-full h-full cursor-pointer">
+                </label>
+
+                <div class="h-5 w-px bg-slate-200 mx-0.5"></div>
+
+                <!-- 線の太さ -->
+                <div class="flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl" id="size-palette">
+                    <button data-size="2" class="size-btn w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white transition-all" title="細字 (2px)">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+                    </button>
+                    <button data-size="4" class="size-btn w-7 h-7 rounded-lg flex items-center justify-center bg-white shadow-sm transition-all" title="中字 (4px)">
+                        <span class="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
+                    </button>
+                    <button data-size="8" class="size-btn w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white transition-all" title="太字 (8px)">
+                        <span class="w-4 h-4 rounded-full bg-slate-700"></span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="h-6 w-px bg-slate-200 mx-0.5 shrink-0"></div>
+
+            <!-- 元に戻す・やり直し -->
+            <div class="flex items-center gap-1 shrink-0">
+                <button id="btn-undo" class="p-2 rounded-xl text-slate-600 hover:bg-slate-100 disabled:opacity-35 disabled:pointer-events-none transition-colors" title="元に戻す (Ctrl+Z)">
+                    <i data-lucide="undo-2" class="w-4 h-4"></i>
+                </button>
+                <button id="btn-redo" class="p-2 rounded-xl text-slate-600 hover:bg-slate-100 disabled:opacity-35 disabled:pointer-events-none transition-colors" title="やり直し (Ctrl+Y)">
+                    <i data-lucide="redo-2" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="h-6 w-px bg-slate-200 mx-0.5 shrink-0"></div>
+
+            <!-- 背景スタイル・オートハイド切替・保存管理メニュー -->
+            <div class="flex items-center gap-1 shrink-0">
+                <button id="btn-bg-toggle" class="p-2 rounded-xl text-slate-600 hover:bg-slate-100 transition-colors" title="背景パターン切替（方眼 / ドット / 無地）">
+                    <i data-lucide="grid" class="w-4 h-4"></i>
+                </button>
+                <button id="btn-autohide-toggle" class="p-2 rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors" title="描画中にメニューを自動で隠す：ON">
+                    <i data-lucide="eye-off" class="w-4 h-4"></i>
+                </button>
+                <button id="btn-menu" class="flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-slate-700 hover:bg-slate-100 font-medium text-sm transition-colors" title="保存・書き出し・設定">
+                    <i data-lucide="folder-down" class="w-4 h-4 text-blue-600"></i>
+                    <span class="hidden sm:inline">保存/管理</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 選択範囲のフローティングアクションバー（選択中のみ表示） -->
+    <div id="selection-toolbar" class="hidden fixed z-30 bg-slate-900/95 text-white backdrop-blur-md shadow-xl rounded-2xl px-2.5 py-1.5 flex items-center gap-1.5 border border-slate-700/80 transition-opacity">
+        <span id="selection-count" class="text-xs font-medium text-slate-300 px-1.5">0本の線</span>
+        <div class="h-4 w-px bg-slate-700"></div>
+        <button data-sel-color="#1e293b" class="sel-color-btn w-5 h-5 rounded-full bg-slate-700 border border-white/40 hover:scale-110 transition-transform" title="黒に変更"></button>
+        <button data-sel-color="#ef4444" class="sel-color-btn w-5 h-5 rounded-full bg-red-500 border border-white/40 hover:scale-110 transition-transform" title="赤に変更"></button>
+        <button data-sel-color="#2563eb" class="sel-color-btn w-5 h-5 rounded-full bg-blue-500 border border-white/40 hover:scale-110 transition-transform" title="青に変更"></button>
+        <button data-sel-color="#16a34a" class="sel-color-btn w-5 h-5 rounded-full bg-green-500 border border-white/40 hover:scale-110 transition-transform" title="緑に変更"></button>
+        <div class="h-4 w-px bg-slate-700 mx-0.5"></div>
+        <button id="btn-duplicate-selection" class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium transition-colors" title="複製">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            <span>複製</span>
+        </button>
+        <button id="btn-delete-selection" class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-medium transition-colors" title="選択範囲を一括削除 (Delete)">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span>一括削除</span>
+        </button>
+    </div>
+
+    <!-- 右下ズームコントロール＆控えめな保存ステータス -->
+    <div class="fixed bottom-3 right-3 z-30 flex flex-col items-end gap-1.5">
+        <!-- 控えめな保存ステータスバッジ -->
+        <div id="save-status" class="flex items-center gap-1.5 bg-white/80 backdrop-blur-sm border border-slate-200/60 rounded-full px-2.5 py-0.5 text-[11px] text-slate-400 transition-opacity">
+            <span id="save-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span id="save-text">保存完了</span>
+        </div>
+
+        <!-- ズーム操作パネル -->
+        <div class="flex items-center gap-0.5 bg-white/90 backdrop-blur-md shadow-md shadow-slate-900/10 border border-slate-200/80 rounded-2xl p-1">
+            <button id="btn-zoom-out" class="p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 transition-colors" title="縮小">
+                <i data-lucide="minus" class="w-4 h-4"></i>
+            </button>
+            <button id="btn-zoom-reset" class="px-2 py-1 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-100 min-w-[3.2rem] text-center transition-colors" title="100%・初期位置にリセット">
+                100%
+            </button>
+            <button id="btn-zoom-in" class="p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 transition-colors" title="拡大">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- 保存・データ管理モーダル -->
+    <div id="menu-modal" class="hidden fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="database" class="w-5 h-5 text-blue-600"></i>
+                    メモの保存・データ管理
+                </h2>
+                <button id="close-menu-modal" class="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="bg-emerald-50/80 border border-emerald-200/70 rounded-2xl p-3.5 text-xs text-emerald-900 leading-relaxed space-y-1">
+                    <div class="font-semibold flex items-center gap-1.5">
+                        <i data-lucide="hard-drive" class="w-4 h-4 text-emerald-600"></i>
+                        大容量ストレージ（IndexedDB）で自動保存中
+                    </div>
+                    <p class="text-emerald-800">
+                        描画データは自動的に座標圧縮されたうえでブラウザの大容量領域に保存されます。現在 <strong id="stats-stroke-count">0</strong> 本の線（約 <strong id="stats-data-size">0 KB</strong>）を保存しています。
+                    </p>
+                </div>
+
+                <!-- オートハイド設定スイッチ -->
+                <div class="flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50/60">
+                    <div>
+                        <div class="text-sm font-semibold text-slate-800">描画中はメニューを自動で隠す</div>
+                        <div class="text-xs text-slate-500">ペンや指で描き始めると上部バーを収納します</div>
+                    </div>
+                    <input type="checkbox" id="checkbox-autohide" checked class="w-5 h-5 accent-blue-600 rounded cursor-pointer">
+                </div>
+
+                <div class="space-y-2.5">
+                    <button id="btn-export-png" class="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 transition-all text-left">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                                <i data-lucide="image" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <div class="text-sm font-semibold text-slate-800">画像として保存 (PNG)</div>
+                                <div class="text-xs text-slate-500">描いた範囲全体を1枚の画像に出力します</div>
+                            </div>
+                        </div>
+                        <i data-lucide="download" class="w-4 h-4 text-slate-400"></i>
+                    </button>
+
+                    <button id="btn-export-json" class="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 transition-all text-left">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
+                                <i data-lucide="file-code" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <div class="text-sm font-semibold text-slate-800">バックアップ保存 (JSON)</div>
+                                <div class="text-xs text-slate-500">再編集可能なデータファイルとして保存</div>
+                            </div>
+                        </div>
+                        <i data-lucide="download" class="w-4 h-4 text-slate-400"></i>
+                    </button>
+
+                    <label class="w-full flex items-center justify-between px-4 py-3 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 transition-all cursor-pointer">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+                                <i data-lucide="upload" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <div class="text-sm font-semibold text-slate-800">バックアップから復元 (JSON)</div>
+                                <div class="text-xs text-slate-500">保存したJSONファイルを読み込みます</div>
+                            </div>
+                        </div>
+                        <i data-lucide="folder-open" class="w-4 h-4 text-slate-400"></i>
+                        <input type="file" id="input-import-json" accept=".json" class="hidden">
+                    </label>
+                </div>
+
+                <div class="pt-2 border-t border-slate-100">
+                    <button id="btn-clear-canvas" class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm transition-colors">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        キャンバスをすべて消去
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- カスタム確認ダイアログ -->
+    <div id="confirm-modal" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-sm p-6 space-y-4">
+            <div class="flex items-center gap-3 text-red-600">
+                <div class="w-10 h-10 rounded-2xl bg-red-100 flex items-center justify-center shrink-0">
+                    <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                </div>
+                <h3 id="confirm-title" class="text-base font-bold text-slate-800">確認</h3>
+            </div>
+            <p id="confirm-message" class="text-sm text-slate-600 leading-relaxed">本当に実行しますか？</p>
+            <div class="flex items-center justify-end gap-2 pt-2">
+                <button id="confirm-cancel" class="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">キャンセル</button>
+                <button id="confirm-ok" class="px-4 py-2 rounded-xl text-sm font-semibold bg-red-600 hover:bg-red-700 text-white shadow-sm transition-colors">消去する</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知トースト -->
+    <div id="toast" class="hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white text-xs font-medium px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm">
+        メッセージ
+    </div>
+
+    <script>
+        /**
+         * Infinite Note - 無限キャンバス手書きメモ帳 (大容量IndexedDB & 自動収納UI対応版)
+         */
+
+        lucide.createIcons();
+
+     // IndexedDB 設定（localStorageの5MB制限を回避し、数百MB〜数GBの保存に対応）
+        const DB_NAME = 'InfiniteNoteDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'notebooks';
+        const NOTE_ID = 'default_notebook';
+        const LEGACY_STORAGE_KEY = 'infinite_note_data_v1';
+
+        // DOM要素
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const toolbarWrapper = document.getElementById('toolbar-wrapper');
+        const menuTogglePill = document.getElementById('menu-toggle-pill');
+        const menuToggleIcon = document.getElementById('menu-toggle-icon');
+        const menuToggleLabel = document.getElementById('menu-toggle-label');
+        const selectionToolbar = document.getElementById('selection-toolbar');
+        const selectionCountEl = document.getElementById('selection-count');
+        const zoomResetBtn = document.getElementById('btn-zoom-reset');
+        const saveDot = document.getElementById('save-dot');
+        const saveText = document.getElementById('save-text');
+
+        // アプリケーション状態
+        const state = {
+            strokes: [], // { id, points: [{x, y}], color, size, bbox: {minX, minY, maxX, maxY} }
+            history: [],
+            historyIndex: -1,
+            camera: {
+                x: 0,
+                y: 0,
+                zoom: 1
+            },
+            tool: 'pen', // 'pen' | 'eraser' | 'lasso' | 'pan'
+            penColor: '#1e293b',
+            penSize: 4,
+            bgPattern: 'grid', // 'grid' | 'dots' | 'blank'
+
+            // メニュー表示・収納状態
+            isToolbarVisible: true,
+            autoHideToolbar: true,
+            wasAutoHiddenDuringStroke: false,
+
+            // 描画・操作中の一時状態
+            currentStroke: null,
+            hoveredStrokeIds: new Set(),
+
+            // 投げ縄・選択関連
+            lassoPoints: [],
+            selectedIds: new Set(),
+            selectionBox: null,
+            transformMode: null,
+            transformStartWorld: null,
+            transformInitialStrokes: null,
+            transformInitialBox: null,
+
+            // 自動スクロール状態
+            lastScreenPointer: null,
+            autoScrollVel: { x: 0, y: 0 },
+
+            // マルチタッチ・ポインター管理
+            activePointers: new Map(),
+            isPinching: false,
+            pinchStartDist: 0,
+            pinchStartZoom: 1,
+            pinchCenterWorld: null,
+            panLastScreen: null,
+            isSpacePressed: false
+        };
+
+        // ==========================================
+        // 上部メニューの開閉・オートハイド制御
+        // ==========================================
+        function setToolbarVisibility(visible, isAuto = false) {
+            state.isToolbarVisible = visible;
+            if (visible) {
+                toolbarWrapper.classList.remove('toolbar-hidden');
+                menuToggleIcon.setAttribute('data-lucide', 'chevron-up');
+                menuToggleLabel.textContent = 'メニュー隠す';
+                menuTogglePill.classList.remove('bg-blue-600', 'text-white', 'border-blue-600');
+                menuTogglePill.classList.add('bg-white/90', 'text-slate-700', 'border-slate-200/90');
+                menuToggleIcon.classList.remove('text-white');
+                menuToggleIcon.classList.add('text-blue-600');
+            } else {
+                toolbarWrapper.classList.add('toolbar-hidden');
+                menuToggleIcon.setAttribute('data-lucide', 'sliders-horizontal');
+                menuToggleLabel.textContent = 'ツールを開く';
+                menuTogglePill.classList.remove('bg-white/90', 'text-slate-700', 'border-slate-200/90');
+                menuTogglePill.classList.add('bg-blue-600', 'text-white', 'border-blue-600');
+                menuToggleIcon.classList.remove('text-blue-600');
+                menuToggleIcon.classList.add('text-white');
+            }
+            lucide.createIcons();
+            if (!isAuto) {
+                state.wasAutoHiddenDuringStroke = false;
+            }
+        }
+
+        menuTogglePill.addEventListener('click', () => {
+            setToolbarVisibility(!state.isToolbarVisible, false);
+        });
+
+        function updateAutoHideUI() {
+            const btn = document.getElementById('btn-autohide-toggle');
+            const chk = document.getElementById('checkbox-autohide');
+            chk.checked = state.autoHideToolbar;
+            if (state.autoHideToolbar) {
+                btn.className = 'p-2 rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors';
+                btn.title = '描画中にメニューを自動で隠す：ON';
+            } else {
+                btn.className = 'p-2 rounded-xl text-slate-400 hover:bg-slate-100 transition-colors';
+                btn.title = '描画中にメニューを自動で隠す：OFF';
+            }
+        }
+
+        document.getElementById('btn-autohide-toggle').addEventListener('click', () => {
+            state.autoHideToolbar = !state.autoHideToolbar;
+            updateAutoHideUI();
+            saveToIndexedDB();
+            showToast(state.autoHideToolbar ? '描画中の自動収納：ON' : '描画中の自動収納：OFF');
+        });
+
+        document.getElementById('checkbox-autohide').addEventListener('change', (e) => {
+            state.autoHideToolbar = e.target.checked;
+            updateAutoHideUI();
+            saveToIndexedDB();
+        });
+// ==========================================
+        // 座標変換 ＆ 座標データ軽量化（RDP間引き・丸め）
+        // ==========================================
+        function screenToWorld(sx, sy) {
+            return {
+                x: sx / state.camera.zoom + state.camera.x,
+                y: sy / state.camera.zoom + state.camera.y
+            };
+        }
+
+        function worldToScreen(wx, wy) {
+            return {
+                x: (wx - state.camera.x) * state.camera.zoom,
+                y: (wy - state.camera.y) * state.camera.zoom
+            };
+        }
+
+        function roundCoord(val) {
+            return Math.round(val * 10) / 10;
+        }
+
+        // Ramer-Douglas-Peucker アルゴリズムによる軌跡ポイントの軽量化
+        function simplifyPoints(points, epsilon = 0.6) {
+            if (!points || points.length <= 2) {
+                return points.map(p => ({ x: roundCoord(p.x), y: roundCoord(p.y) }));
+            }
+
+            let maxDistSq = 0;
+            let index = 0;
+            const end = points.length - 1;
+            const epsSq = epsilon * epsilon;
+
+            for (let i = 1; i < end; i++) {
+                const dSq = distToSegmentSquared(points[i], points[0], points[end]);
+                if (dSq > maxDistSq) {
+                    index = i;
+                    maxDistSq = dSq;
+                }
+            }
+
+            if (maxDistSq > epsSq) {
+                const left = simplifyPoints(points.slice(0, index + 1), epsilon);
+                const right = simplifyPoints(points.slice(index), epsilon);
+                return left.slice(0, left.length - 1).concat(right);
+            } else {
+                return [
+                    { x: roundCoord(points[0].x), y: roundCoord(points[0].y) },
+                    { x: roundCoord(points[end].x), y: roundCoord(points[end].y) }
+                ];
+            }
+        }
+
+        function computeBBox(points) {
+            if (!points || points.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const pt of points) {
+                if (pt.x < minX) minX = pt.x;
+                if (pt.y < minY) minY = pt.y;
+                if (pt.x > maxX) maxX = pt.x;
+                if (pt.y > maxY) maxY = pt.y;
+            }
+            return {
+                minX: roundCoord(minX),
+                minY: roundCoord(minY),
+                maxX: roundCoord(maxX),
+                maxY: roundCoord(maxY)
+            };
+        }
+      // ==========================================
+        // IndexedDB 大容量自動保存エンジン
+        // ==========================================
+        function openDatabase() {
+            return new Promise((resolve, reject) => {
+                if (!window.indexedDB) {
+                    reject(new Error('IndexedDB is not supported'));
+                    return;
+                }
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = (e) => resolve(e.target.result);
+                request.onerror = (e) => reject(e.target.error);
+            });
+        }
+
+        // 保存用にストローク配列をコンパクト化（座標配列をフラット数値配列 [x1, y1, x2, y2...] に圧縮）
+        function packStrokesForStorage(strokes) {
+            return strokes.map(s => {
+                const flatPts = new Array(s.points.length * 2);
+                for (let i = 0; i < s.points.length; i++) {
+                    flatPts[i * 2] = roundCoord(s.points[i].x);
+                    flatPts[i * 2 + 1] = roundCoord(s.points[i].y);
+                }
+                return {
+                    id: s.id,
+                    c: s.color,
+                    s: s.size,
+                    p: flatPts
+                };
+            });
+        }
+
+        function unpackStrokesFromStorage(packed) {
+            if (!Array.isArray(packed)) return [];
+            return packed.map(item => {
+                // 旧形式（pointsオブジェクト配列）との互換性も維持
+                if (Array.isArray(item.points)) {
+                    const pts = item.points.map(pt => ({ x: roundCoord(pt.x), y: roundCoord(pt.y) }));
+                    return {
+                        id: item.id,
+                        color: item.color,
+                        size: item.size,
+                        points: pts,
+                        bbox: item.bbox || computeBBox(pts)
+                    };
+                }
+                const flat = item.p || [];
+                const pts = [];
+                for (let i = 0; i < flat.length; i += 2) {
+                    pts.push({ x: flat[i], y: flat[i + 1] });
+                }
+                return {
+                    id: item.id,
+                    color: item.c,
+                    size: item.s,
+                    points: pts,
+                    bbox: computeBBox(pts)
+                };
+            });
+        }
+
+        let saveTimeout = null;
+        function saveToIndexedDB() {
+            saveDot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse';
+            saveText.textContent = '保存中...';
+            clearTimeout(saveTimeout);
+
+            saveTimeout = setTimeout(async () => {
+                try {
+                    const db = await openDatabase();
+                    const payload = {
+                        id: NOTE_ID,
+                        version: 2,
+                        updatedAt: Date.now(),
+                        packedStrokes: packStrokesForStorage(state.strokes),
+                        camera: {
+                            x: roundCoord(state.camera.x),
+                            y: roundCoord(state.camera.y),
+                            zoom: Math.round(state.camera.zoom * 1000) / 1000
+                        },
+                        bgPattern: state.bgPattern,
+                        penColor: state.penColor,
+                        penSize: state.penSize,
+                        autoHideToolbar: state.autoHideToolbar
+                    };
+
+                    await new Promise((resolve, reject) => {
+                        const tx = db.transaction(STORE_NAME, 'readwrite');
+                        const store = tx.objectStore(STORE_NAME);
+                        const req = store.put(payload);
+                        req.onsuccess = () => resolve();
+                        req.onerror = () => reject(req.error);
+                    });
+
+                    saveDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+                    saveText.textContent = '保存完了';
+                } catch (err) {
+                    console.error('IndexedDB保存エラー:', err);
+                    saveDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500';
+                    saveText.textContent = '保存待機中';
+                }
+            }, 350);
+        }
+
+        async function loadFromStorage() {
+            try {
+                const db = await openDatabase();
+                const record = await new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const req = store.get(NOTE_ID);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => reject(req.error);
+                });
+
+                if (record) {
+                    if (record.packedStrokes) {
+                        state.strokes = unpackStrokesFromStorage(record.packedStrokes);
+                    } else if (Array.isArray(record.strokes)) {
+                        state.strokes = unpackStrokesFromStorage(record.strokes);
+                    }
+                    if (record.camera) state.camera = record.camera;
+                    if (record.bgPattern) state.bgPattern = record.bgPattern;
+                    if (record.penColor) setPenColor(record.penColor, false);
+                    if (record.penSize) setPenSize(record.penSize, false);
+                    if (typeof record.autoHideToolbar === 'boolean') {
+                        state.autoHideToolbar = record.autoHideToolbar;
+                    }
+                } else {
+                    // 旧localStorageにデータがあれば自動移行して削除
+                    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
+                    if (legacyRaw) {
+                        const legacy = JSON.parse(legacyRaw);
+                        if (Array.isArray(legacy.strokes)) {
+                            state.strokes = unpackStrokesFromStorage(legacy.strokes);
+                        }
+                        if (legacy.camera) state.camera = legacy.camera;
+                        if (legacy.bgPattern) state.bgPattern = legacy.bgPattern;
+                        localStorage.removeItem(LEGACY_STORAGE_KEY);
+                        saveToIndexedDB();
+                    }
+                }
+            } catch (e) {
+                console.error('データ読み込みエラー:', e);
+            }
+
+            state.history = [JSON.stringify(state.strokes)];
+            state.historyIndex = 0;
+            updateUndoRedoButtons();
+            updateZoomDisplay();
+            updateAutoHideUI();
+        }
+// ==========================================
+        // 履歴管理 (Undo / Redo)
+        // ==========================================
+        function pushHistory() {
+            state.history = state.history.slice(0, state.historyIndex + 1);
+            const snapshot = JSON.stringify(state.strokes);
+            state.history.push(snapshot);
+            if (state.history.length > 40) {
+                state.history.shift();
+            } else {
+                state.historyIndex++;
+            }
+            updateUndoRedoButtons();
+            saveToIndexedDB();
+        }
+
+        function undo() {
+            if (state.historyIndex > 0) {
+                state.historyIndex--;
+                state.strokes = JSON.parse(state.history[state.historyIndex]);
+                clearSelection();
+                updateUndoRedoButtons();
+                saveToIndexedDB();
+                render();
+                showToast('元に戻しました');
+            }
+        }
+
+        function redo() {
+            if (state.historyIndex < state.history.length - 1) {
+                state.historyIndex++;
+                state.strokes = JSON.parse(state.history[state.historyIndex]);
+                clearSelection();
+                updateUndoRedoButtons();
+                saveToIndexedDB();
+                render();
+                showToast('やり直しました');
+            }
+        }
+
+        function updateUndoRedoButtons() {
+            document.getElementById('btn-undo').disabled = state.historyIndex <= 0;
+            document.getElementById('btn-redo').disabled = state.historyIndex >= state.history.length - 1;
+        }
+
+        // ==========================================
+        // 幾何学計算（当たり判定・投げ縄包含判定）
+        // ==========================================
+        function distToSegmentSquared(p, v, w) {
+            const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
+            if (l2 === 0) return (p.x - v.x) ** 2 + (p.y - v.y) ** 2;
+            let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
+        }
+
+        function isPointNearStroke(wx, wy, stroke, toleranceWorld) {
+            const pad = toleranceWorld + stroke.size / 2;
+            const b = stroke.bbox;
+            if (wx < b.minX - pad || wx > b.maxX + pad || wy < b.minY - pad || wy > b.maxY + pad) {
+                return false;
+            }
+            const pts = stroke.points;
+            if (pts.length === 1) {
+                return Math.hypot(wx - pts[0].x, wy - pts[0].y) <= pad;
+            }
+            const padSq = pad * pad;
+            const p = { x: wx, y: wy };
+            for (let i = 0; i < pts.length - 1; i++) {
+                if (distToSegmentSquared(p, pts[i], pts[i + 1]) <= padSq) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function isPointInPolygon(pt, polygon) {
+            let inside = false;
+            for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                const xi = polygon[i].x, yi = polygon[i].y;
+                const xj = polygon[j].x, yj = polygon[j].y;
+                const intersect = ((yi > pt.y) !== (yj > pt.y)) &&
+                    (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi + 1e-10) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+// ==========================================
+        // 選択範囲（投げ縄）の計算・操作
+        // ==========================================
+        function updateSelectionBox() {
+            if (state.selectedIds.size === 0) {
+                state.selectionBox = null;
+                selectionToolbar.classList.add('hidden');
+                return;
+            }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const s of state.strokes) {
+                if (state.selectedIds.has(s.id)) {
+                    const pad = s.size / 2;
+                    if (s.bbox.minX - pad < minX) minX = s.bbox.minX - pad;
+                    if (s.bbox.minY - pad < minY) minY = s.bbox.minY - pad;
+                    if (s.bbox.maxX + pad > maxX) maxX = s.bbox.maxX + pad;
+                    if (s.bbox.maxY + pad > maxY) maxY = s.bbox.maxY + pad;
+                }
+            }
+            const minSizeWorld = 24 / state.camera.zoom;
+            if (maxX - minX < minSizeWorld) {
+                const cx = (minX + maxX) / 2;
+                minX = cx - minSizeWorld / 2;
+                maxX = cx + minSizeWorld / 2;
+            }
+            if (maxY - minY < minSizeWorld) {
+                const cy = (minY + maxY) / 2;
+                minY = cy - minSizeWorld / 2;
+                maxY = cy + minSizeWorld / 2;
+            }
+
+            state.selectionBox = { minX, minY, maxX, maxY };
+            positionSelectionToolbar();
+        }
+
+        function positionSelectionToolbar() {
+            if (!state.selectionBox || state.selectedIds.size === 0) {
+                selectionToolbar.classList.add('hidden');
+                return;
+            }
+            selectionToolbar.classList.remove('hidden');
+            selectionCountEl.textContent = `${state.selectedIds.size}本の線`;
+
+            const topLeft = worldToScreen(state.selectionBox.minX, state.selectionBox.minY);
+            const bottomRight = worldToScreen(state.selectionBox.maxX, state.selectionBox.maxY);
+            const centerX = (topLeft.x + bottomRight.x) / 2;
+
+            const toolbarRect = selectionToolbar.getBoundingClientRect();
+            const tbWidth = toolbarRect.width || 280;
+            const tbHeight = toolbarRect.height || 44;
+
+            const topBoundary = state.isToolbarVisible ? 72 : 48;
+            let left = centerX - tbWidth / 2;
+            let top = topLeft.y - tbHeight - 16;
+
+            if (top < topBoundary) {
+                top = bottomRight.y + 16;
+            }
+            left = Math.max(12, Math.min(window.innerWidth - tbWidth - 12, left));
+            top = Math.max(topBoundary, Math.min(window.innerHeight - tbHeight - 24, top));
+
+            selectionToolbar.style.left = `${left}px`;
+            selectionToolbar.style.top = `${top}px`;
+        }
+
+        function clearSelection() {
+            state.selectedIds.clear();
+            state.selectionBox = null;
+            state.lassoPoints = [];
+            state.transformMode = null;
+            state.autoScrollVel = { x: 0, y: 0 };
+            selectionToolbar.classList.add('hidden');
+        }
+
+        function deleteSelectedStrokes() {
+            if (state.selectedIds.size === 0) return;
+            state.strokes = state.strokes.filter(s => !state.selectedIds.has(s.id));
+            clearSelection();
+            pushHistory();
+            render();
+            showToast('選択した線を一括削除しました');
+        }
+
+        function duplicateSelectedStrokes() {
+            if (state.selectedIds.size === 0) return;
+            const offset = 24 / state.camera.zoom;
+            const newIds = new Set();
+            const copies = [];
+            for (const s of state.strokes) {
+                if (state.selectedIds.has(s.id)) {
+                    const id = 'st_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+                    const newPoints = s.points.map(p => ({
+                        x: roundCoord(p.x + offset),
+                        y: roundCoord(p.y + offset)
+                    }));
+                    copies.push({
+                        id,
+                        points: newPoints,
+                        color: s.color,
+                        size: s.size,
+                        bbox: computeBBox(newPoints)
+                    });
+                    newIds.add(id);
+                }
+            }
+            state.strokes.push(...copies);
+            state.selectedIds = newIds;
+            updateSelectionBox();
+            pushHistory();
+            render();
+            showToast('選択範囲を複製しました');
+        }
+
+        function changeSelectedColor(newColor) {
+            if (state.selectedIds.size === 0) return;
+            for (const s of state.strokes) {
+                if (state.selectedIds.has(s.id)) {
+                    s.color = newColor;
+                }
+            }
+            pushHistory();
+            render();
+        }
+
+        function hitTestSelectionBox(sx, sy) {
+            if (!state.selectionBox) return null;
+            const tl = worldToScreen(state.selectionBox.minX, state.selectionBox.minY);
+            const br = worldToScreen(state.selectionBox.maxX, state.selectionBox.maxY);
+            const handleRadius = 20;
+
+            const corners = [
+                { mode: 'resize-nw', x: tl.x, y: tl.y },
+                { mode: 'resize-ne', x: br.x, y: tl.y },
+                { mode: 'resize-se', x: br.x, y: br.y },
+                { mode: 'resize-sw', x: tl.x, y: br.y }
+            ];
+            for (const c of corners) {
+                if (Math.hypot(sx - c.x, sy - c.y) <= handleRadius) {
+                    return c.mode;
+                }
+            }
+            const pad = 8;
+            if (sx >= tl.x - pad && sx <= br.x + pad && sy >= tl.y - pad && sy <= br.y + pad) {
+                return 'move';
+            }
+            return null;
+        }
+
+        function applySelectionTransform(currentWorld) {
+            if (!state.transformMode || !state.transformStartWorld || !state.transformInitialStrokes) return;
+
+            if (state.transformMode === 'move') {
+                const dx = currentWorld.x - state.transformStartWorld.x;
+                const dy = currentWorld.y - state.transformStartWorld.y;
+                for (const s of state.strokes) {
+                    const initPts = state.transformInitialStrokes.get(s.id);
+                    if (initPts) {
+                        s.points = initPts.map(p => ({
+                            x: roundCoord(p.x + dx),
+                            y: roundCoord(p.y + dy)
+                        }));
+                        s.bbox = computeBBox(s.points);
+                    }
+                }
+                updateSelectionBox();
+            } else if (state.transformMode.startsWith('resize-')) {
+                const initBox = state.transformInitialBox;
+                const initW = Math.max(1, initBox.maxX - initBox.minX);
+                const initH = Math.max(1, initBox.maxY - initBox.minY);
+
+                let anchorX, anchorY, newW, newH;
+                if (state.transformMode === 'resize-se') {
+                    anchorX = initBox.minX;
+                    anchorY = initBox.minY;
+                    newW = currentWorld.x - anchorX;
+                    newH = currentWorld.y - anchorY;
+                } else if (state.transformMode === 'resize-nw') {
+                    anchorX = initBox.maxX;
+                    anchorY = initBox.maxY;
+                    newW = anchorX - currentWorld.x;
+                    newH = anchorY - currentWorld.y;
+                } else if (state.transformMode === 'resize-ne') {
+                    anchorX = initBox.minX;
+                    anchorY = initBox.maxY;
+                    newW = currentWorld.x - anchorX;
+                    newH = anchorY - currentWorld.y;
+                } else if (state.transformMode === 'resize-sw') {
+                    anchorX = initBox.maxX;
+                    anchorY = initBox.minY;
+                    newW = anchorX - currentWorld.x;
+                    newH = currentWorld.y - anchorY;
+                }
+
+                const minDim = 16 / state.camera.zoom;
+                if (Math.abs(newW) < minDim) newW = newW >= 0 ? minDim : -minDim;
+                if (Math.abs(newH) < minDim) newH = newH >= 0 ? minDim : -minDim;
+
+                const signX = (state.transformMode === 'resize-se' || state.transformMode === 'resize-ne') ? 1 : -1;
+                const signY = (state.transformMode === 'resize-se' || state.transformMode === 'resize-sw') ? 1 : -1;
+
+                const scaleX = (newW / initW) * signX;
+                const scaleY = (newH / initH) * signY;
+
+                for (const s of state.strokes) {
+                    const initData = state.transformInitialStrokes.get(s.id);
+                    if (initData) {
+                        s.points = initData.map(p => ({
+                            x: roundCoord(anchorX + (p.x - anchorX) * scaleX),
+                            y: roundCoord(anchorY + (p.y - anchorY) * scaleY)
+                        }));
+                        s.bbox = computeBBox(s.points);
+                    }
+                }
+                updateSelectionBox();
+            }
+        }
+// ==========================================
+        // 画面端での自動スクロール（Auto-Scroll）ループ
+        // ==========================================
+        function updateAutoScrollVelocity(sx, sy) {
+            const edgeThreshold = 68;
+            const maxSpeed = 16;
+            let vx = 0;
+            let vy = 0;
+
+            if (sx < edgeThreshold) {
+                vx = -maxSpeed * ((edgeThreshold - sx) / edgeThreshold);
+            } else if (sx > window.innerWidth - edgeThreshold) {
+                vx = maxSpeed * ((sx - (window.innerWidth - edgeThreshold)) / edgeThreshold);
+            }
+
+            const topThresh = state.isToolbarVisible ? edgeThreshold + 24 : edgeThreshold;
+            if (sy < topThresh) {
+                vy = -maxSpeed * ((topThresh - sy) / topThresh);
+            } else if (sy > window.innerHeight - edgeThreshold) {
+                vy = maxSpeed * ((sy - (window.innerHeight - edgeThreshold)) / edgeThreshold);
+            }
+
+            state.autoScrollVel = { x: vx, y: vy };
+        }
+
+        function autoScrollLoop() {
+            if (state.transformMode === 'move' && (state.autoScrollVel.x !== 0 || state.autoScrollVel.y !== 0) && state.lastScreenPointer) {
+                state.camera.x += state.autoScrollVel.x / state.camera.zoom;
+                state.camera.y += state.autoScrollVel.y / state.camera.zoom;
+
+                const currentWorld = screenToWorld(state.lastScreenPointer.x, state.lastScreenPointer.y);
+                applySelectionTransform(currentWorld);
+                render();
+            }
+            requestAnimationFrame(autoScrollLoop);
+        }
+        requestAnimationFrame(autoScrollLoop);
+
+        // ==========================================
+        // ポインター（タッチ・ペン・マウス）イベント処理
+        // ==========================================
+        canvas.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            canvas.setPointerCapture(e.pointerId);
+            state.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pointerType: e.pointerType });
+
+            // 2本指以上のタッチ -> ピンチズーム＆2本指パン移動
+            if (state.activePointers.size >= 2) {
+                if (state.currentStroke) {
+                    state.currentStroke = null;
+                }
+                state.lassoPoints = [];
+                state.transformMode = null;
+                state.autoScrollVel = { x: 0, y: 0 };
+
+                const pts = Array.from(state.activePointers.values());
+                state.isPinching = true;
+                state.pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                state.pinchStartZoom = state.camera.zoom;
+                const centerScreen = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+                state.pinchCenterWorld = screenToWorld(centerScreen.x, centerScreen.y);
+                state.panLastScreen = centerScreen;
+                render();
+                return;
+            }
+
+            const sx = e.clientX;
+            const sy = e.clientY;
+            const worldPt = screenToWorld(sx, sy);
+
+            // 中クリック・右クリック または スペースキー押下中 または 手のひらツール -> キャンバス移動
+            if (e.button === 1 || e.button === 2 || state.isSpacePressed || state.tool === 'pan') {
+                state.panLastScreen = { x: sx, y: sy };
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+
+            // オートハイドONかつメニュー表示中なら、描画や消去開始時にスッと隠す
+            if (state.autoHideToolbar && state.isToolbarVisible && (state.tool === 'pen' || state.tool === 'eraser')) {
+                setToolbarVisibility(false, true);
+                state.wasAutoHiddenDuringStroke = true;
+            }
+
+            if (state.tool === 'pen') {
+                clearSelection();
+                state.currentStroke = {
+                    id: 'st_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+                    points: [{ x: roundCoord(worldPt.x), y: roundCoord(worldPt.y) }],
+                    color: state.penColor,
+                    size: state.penSize,
+                    bbox: {
+                        minX: roundCoord(worldPt.x),
+                        minY: roundCoord(worldPt.y),
+                        maxX: roundCoord(worldPt.x),
+                        maxY: roundCoord(worldPt.y)
+                    }
+                };
+                render();
+            } else if (state.tool === 'eraser') {
+                clearSelection();
+                eraseAtPoint(worldPt.x, worldPt.y);
+            } else if (state.tool === 'lasso') {
+                const hit = hitTestSelectionBox(sx, sy);
+                if (hit) {
+                    state.transformMode = hit;
+                    state.transformStartWorld = worldPt;
+                    state.transformInitialBox = { ...state.selectionBox };
+                    state.transformInitialStrokes = new Map();
+                    for (const s of state.strokes) {
+                        if (state.selectedIds.has(s.id)) {
+                            state.transformInitialStrokes.set(s.id, s.points.map(p => ({ ...p })));
+                        }
+                    }
+                    state.lastScreenPointer = { x: sx, y: sy };
+                    render();
+                } else {
+                    clearSelection();
+                    state.lassoPoints = [worldPt];
+                    render();
+                }
+            }
+        });
+
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        canvas.addEventListener('pointermove', (e) => {
+            e.preventDefault();
+            if (state.activePointers.has(e.pointerId)) {
+                state.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pointerType: e.pointerType });
+            }
+
+            if (state.isPinching && state.activePointers.size >= 2) {
+                const pts = Array.from(state.activePointers.values());
+                const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                const centerScreen = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+
+                if (state.pinchStartDist > 0) {
+                    const scaleFactor = dist / state.pinchStartDist;
+                    const newZoom = Math.max(0.1, Math.min(5.0, state.pinchStartZoom * scaleFactor));
+                    state.camera.zoom = newZoom;
+                    state.camera.x = state.pinchCenterWorld.x - centerScreen.x / newZoom;
+                    state.camera.y = state.pinchCenterWorld.y - centerScreen.y / newZoom;
+                }
+                state.panLastScreen = centerScreen;
+                updateZoomDisplay();
+                positionSelectionToolbar();
+                render();
+                return;
+            }
+
+            const sx = e.clientX;
+            const sy = e.clientY;
+            const worldPt = screenToWorld(sx, sy);
+
+            if (state.panLastScreen && state.activePointers.size === 1) {
+                const dx = (sx - state.panLastScreen.x) / state.camera.zoom;
+                const dy = (sy - state.panLastScreen.y) / state.camera.zoom;
+                state.camera.x -= dx;
+                state.camera.y -= dy;
+                state.panLastScreen = { x: sx, y: sy };
+                positionSelectionToolbar();
+                render();
+                return;
+            }
+
+            if (state.tool === 'pen' && state.currentStroke) {
+                const lastPt = state.currentStroke.points[state.currentStroke.points.length - 1];
+                const dist = Math.hypot(worldPt.x - lastPt.x, worldPt.y - lastPt.y);
+                if (dist >= 1.5 / state.camera.zoom) {
+                    const rx = roundCoord(worldPt.x);
+                    const ry = roundCoord(worldPt.y);
+                    state.currentStroke.points.push({ x: rx, y: ry });
+                    const b = state.currentStroke.bbox;
+                    if (rx < b.minX) b.minX = rx;
+                    if (ry < b.minY) b.minY = ry;
+                    if (rx > b.maxX) b.maxX = rx;
+                    if (ry > b.maxY) b.maxY = ry;
+                    render();
+                }
+                return;
+            }
+
+            if (state.tool === 'eraser') {
+                if (state.activePointers.size === 1) {
+                    eraseAtPoint(worldPt.x, worldPt.y);
+                } else {
+                    highlightEraserTarget(worldPt.x, worldPt.y);
+                }
+                return;
+            }
+
+            if (state.tool === 'lasso') {
+                if (state.transformMode) {
+                    state.lastScreenPointer = { x: sx, y: sy };
+                    applySelectionTransform(worldPt);
+                    if (state.transformMode === 'move') {
+                        updateAutoScrollVelocity(sx, sy);
+                    }
+                    render();
+                } else if (state.lassoPoints.length > 0) {
+                    const lastPt = state.lassoPoints[state.lassoPoints.length - 1];
+                    if (Math.hypot(worldPt.x - lastPt.x, worldPt.y - lastPt.y) >= 4 / state.camera.zoom) {
+                        state.lassoPoints.push(worldPt);
+                        render();
+                    }
+                } else {
+                    const hit = hitTestSelectionBox(sx, sy);
+                    if (hit === 'move') canvas.style.cursor = 'move';
+                    else if (hit === 'resize-nw' || hit === 'resize-se') canvas.style.cursor = 'nwse-resize';
+                    else if (hit === 'resize-ne' || hit === 'resize-sw') canvas.style.cursor = 'nesw-resize';
+                    else canvas.style.cursor = 'crosshair';
+                }
+            }
+        });
+
+        function handlePointerUp(e) {
+            state.activePointers.delete(e.pointerId);
+
+            if (state.activePointers.size < 2 && state.isPinching) {
+                state.isPinching = false;
+                state.panLastScreen = null;
+                saveToIndexedDB();
+            }
+
+            if (state.panLastScreen && state.activePointers.size === 0) {
+                state.panLastScreen = null;
+                updateCursor();
+                saveToIndexedDB();
+            }
+
+            // ペン描画完了時にRDPアルゴリズムで不要な中間点を間引いて軽量化
+            if (state.tool === 'pen' && state.currentStroke) {
+                if (state.currentStroke.points.length > 0) {
+                    const epsilon = 0.55 / state.camera.zoom;
+                    state.currentStroke.points = simplifyPoints(state.currentStroke.points, epsilon);
+                    state.currentStroke.bbox = computeBBox(state.currentStroke.points);
+                    state.strokes.push(state.currentStroke);
+                    pushHistory();
+                }
+                state.currentStroke = null;
+                render();
+            }
+
+            if (state.tool === 'eraser' && state.erasedDuringDrag) {
+                state.erasedDuringDrag = false;
+                pushHistory();
+            }
+
+            if (state.tool === 'lasso') {
+                if (state.transformMode) {
+                    state.transformMode = null;
+                    state.transformInitialStrokes = null;
+                    state.autoScrollVel = { x: 0, y: 0 };
+                    pushHistory();
+                    render();
+                } else if (state.lassoPoints.length > 0) {
+                    finalizeLassoSelection();
+                }
+            }
+        }
+
+        canvas.addEventListener('pointerup', handlePointerUp);
+        canvas.addEventListener('pointercancel', handlePointerUp);
+
+        function eraseAtPoint(wx, wy) {
+            const tolerance = 12 / state.camera.zoom;
+            const beforeCount = state.strokes.length;
+            state.strokes = state.strokes.filter(s => !isPointNearStroke(wx, wy, s, tolerance));
+            if (state.strokes.length < beforeCount) {
+                state.erasedDuringDrag = true;
+                state.hoveredStrokeIds.clear();
+                render();
+            }
+        }
+
+        function highlightEraserTarget(wx, wy) {
+            const tolerance = 12 / state.camera.zoom;
+            const prevSize = state.hoveredStrokeIds.size;
+            state.hoveredStrokeIds.clear();
+            for (const s of state.strokes) {
+                if (isPointNearStroke(wx, wy, s, tolerance)) {
+                    state.hoveredStrokeIds.add(s.id);
+                }
+            }
+            if (prevSize !== state.hoveredStrokeIds.size || state.hoveredStrokeIds.size > 0) {
+                render();
+            }
+        }
+
+        function finalizeLassoSelection() {
+            const poly = state.lassoPoints;
+            state.lassoPoints = [];
+            state.selectedIds.clear();
+
+            if (poly.length >= 3) {
+                for (const s of state.strokes) {
+                    let insideCount = 0;
+                    for (const pt of s.points) {
+                        if (isPointInPolygon(pt, poly)) {
+                            insideCount++;
+                        }
+                    }
+                    if (insideCount > 0 && insideCount >= Math.ceil(s.points.length * 0.35)) {
+                        state.selectedIds.add(s.id);
+                    }
+                }
+            } else if (poly.length > 0) {
+                const tapPt = poly[0];
+                const tol = 12 / state.camera.zoom;
+                for (let i = state.strokes.length - 1; i >= 0; i--) {
+                    if (isPointNearStroke(tapPt.x, tapPt.y, state.strokes[i], tol)) {
+                        state.selectedIds.add(state.strokes[i].id);
+                        break;
+                    }
+                }
+            }
+
+            updateSelectionBox();
+            render();
+        }
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (e.ctrlKey || e.metaKey) {
+                const zoomFactor = Math.exp(-e.deltaY * 0.008);
+                zoomAtScreenPoint(e.clientX, e.clientY, state.camera.zoom * zoomFactor);
+            } else {
+                state.camera.x += e.deltaX / state.camera.zoom;
+                state.camera.y += e.deltaY / state.camera.zoom;
+                positionSelectionToolbar();
+                render();
+                saveToIndexedDB();
+            }
+        }, { passive: false });
+
+        function zoomAtScreenPoint(sx, sy, targetZoom) {
+            const clampedZoom = Math.max(0.1, Math.min(5.0, targetZoom));
+            const worldBefore = screenToWorld(sx, sy);
+            state.camera.zoom = clampedZoom;
+            state.camera.x = worldBefore.x - sx / clampedZoom;
+            state.camera.y = worldBefore.y - sy / clampedZoom;
+            updateZoomDisplay();
+            positionSelectionToolbar();
+            render();
+            saveToIndexedDB();
+        }
+
+        function updateZoomDisplay() {
+            zoomResetBtn.textContent = `${Math.round(state.camera.zoom * 100)}%`;
+        }
+
+        // ==========================================
+        // 描画（レンダリング）エンジン
+        // ==========================================
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            render();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function drawBackground() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, w, h);
+
+            if (state.bgPattern === 'blank') return;
+
+            const baseSpacing = 32;
+            let spacing = baseSpacing * state.camera.zoom;
+            while (spacing < 16) spacing *= 2;
+            while (spacing > 96) spacing /= 2;
+
+            const offsetX = (-state.camera.x * state.camera.zoom) % spacing;
+            const offsetY = (-state.camera.y * state.camera.zoom) % spacing;
+
+            if (state.bgPattern === 'grid') {
+                ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let x = offsetX; x < w; x += spacing) {
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, h);
+                }
+                for (let y = offsetY; y < h; y += spacing) {
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(w, y);
+                }
+                ctx.stroke();
+            } else if (state.bgPattern === 'dots') {
+                ctx.fillStyle = 'rgba(100, 116, 139, 0.32)';
+                for (let x = offsetX; x < w; x += spacing) {
+                    for (let y = offsetY; y < h; y += spacing) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 1.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+        }
+
+        function drawSingleStroke(targetCtx, stroke, isHighlighted = false, isSelected = false) {
+            const pts = stroke.points;
+            if (!pts || pts.length === 0) return;
+
+            targetCtx.save();
+            targetCtx.lineCap = 'round';
+            targetCtx.lineJoin = 'round';
+
+            if (isHighlighted) {
+                targetCtx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+                targetCtx.lineWidth = stroke.size + 8;
+                traceSmoothPath(targetCtx, pts);
+                targetCtx.stroke();
+            }
+
+            if (isSelected) {
+                targetCtx.strokeStyle = 'rgba(37, 99, 235, 0.25)';
+                targetCtx.lineWidth = stroke.size + 6;
+                traceSmoothPath(targetCtx, pts);
+                targetCtx.stroke();
+            }
+
+            targetCtx.strokeStyle = stroke.color;
+            targetCtx.fillStyle = stroke.color;
+            targetCtx.lineWidth = stroke.size;
+
+            if (pts.length === 1) {
+                targetCtx.beginPath();
+                targetCtx.arc(pts[0].x, pts[0].y, stroke.size / 2, 0, Math.PI * 2);
+                targetCtx.fill();
+            } else {
+                traceSmoothPath(targetCtx, pts);
+                targetCtx.stroke();
+            }
+
+            targetCtx.restore();
+        }
+
+        function traceSmoothPath(targetCtx, pts) {
+            targetCtx.beginPath();
+            targetCtx.moveTo(pts[0].x, pts[0].y);
+            if (pts.length === 2) {
+                targetCtx.lineTo(pts[1].x, pts[1].y);
+                return;
+            }
+            for (let i = 1; i < pts.length - 1; i++) {
+                const midX = (pts[i].x + pts[i + 1].x) / 2;
+                const midY = (pts[i].y + pts[i + 1].y) / 2;
+                targetCtx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+            }
+            const last = pts[pts.length - 1];
+            targetCtx.lineTo(last.x, last.y);
+        }
+
+        function render() {
+            drawBackground();
+
+            ctx.save();
+            ctx.scale(state.camera.zoom, state.camera.zoom);
+            ctx.translate(-state.camera.x, -state.camera.y);
+
+            const viewMinX = state.camera.x - 100 / state.camera.zoom;
+            const viewMinY = state.camera.y - 100 / state.camera.zoom;
+            const viewMaxX = state.camera.x + (window.innerWidth + 100) / state.camera.zoom;
+            const viewMaxY = state.camera.y + (window.innerHeight + 100) / state.camera.zoom;
+
+            for (const s of state.strokes) {
+                if (s.bbox.maxX < viewMinX || s.bbox.minX > viewMaxX ||
+                    s.bbox.maxY < viewMinY || s.bbox.minY > viewMaxY) {
+                    continue;
+                }
+                const isHovered = state.hoveredStrokeIds.has(s.id);
+                const isSelected = state.selectedIds.has(s.id);
+                drawSingleStroke(ctx, s, isHovered, isSelected);
+            }
+
+            if (state.currentStroke) {
+                drawSingleStroke(ctx, state.currentStroke, false, false);
+            }
+
+            if (state.lassoPoints.length > 1) {
+                ctx.save();
+                ctx.strokeStyle = '#2563eb';
+                ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
+                ctx.lineWidth = 2 / state.camera.zoom;
+                ctx.setLineDash([6 / state.camera.zoom, 4 / state.camera.zoom]);
+                ctx.beginPath();
+                ctx.moveTo(state.lassoPoints[0].x, state.lassoPoints[0].y);
+                for (let i = 1; i < state.lassoPoints.length; i++) {
+                    ctx.lineTo(state.lassoPoints[i].x, state.lassoPoints[i].y);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            ctx.restore();
+
+            if (state.selectionBox && state.selectedIds.size > 0) {
+                const tl = worldToScreen(state.selectionBox.minX, state.selectionBox.minY);
+                const br = worldToScreen(state.selectionBox.maxX, state.selectionBox.maxY);
+                const boxW = br.x - tl.x;
+                const boxH = br.y - tl.y;
+
+                ctx.save();
+                ctx.fillStyle = 'rgba(37, 99, 235, 0.04)';
+                ctx.fillRect(tl.x, tl.y, boxW, boxH);
+
+                ctx.strokeStyle = '#2563eb';
+                ctx.lineWidth = 1.75;
+                ctx.setLineDash([5, 4]);
+                ctx.strokeRect(tl.x, tl.y, boxW, boxH);
+                ctx.setLineDash([]);
+
+                const corners = [
+                    { x: tl.x, y: tl.y },
+                    { x: br.x, y: tl.y },
+                    { x: br.x, y: br.y },
+                    { x: tl.x, y: br.y }
+                ];
+                for (const c of corners) {
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeStyle = '#2563eb';
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            if (state.transformMode === 'move') {
+                drawAutoScrollEdgeIndicators();
+            }
+        }
+
+        function drawAutoScrollEdgeIndicators() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            ctx.save();
+            if (state.autoScrollVel.x < 0) {
+                const grad = ctx.createLinearGradient(0, 0, 48, 0);
+                grad.addColorStop(0, 'rgba(37, 99, 235, 0.25)');
+                grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 48, h);
+            } else if (state.autoScrollVel.x > 0) {
+                const grad = ctx.createLinearGradient(w, 0, w - 48, 0);
+                grad.addColorStop(0, 'rgba(37, 99, 235, 0.25)');
+                grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(w - 48, 0, 48, h);
+            }
+            if (state.autoScrollVel.y < 0) {
+                const grad = ctx.createLinearGradient(0, 0, 0, 48);
+                grad.addColorStop(0, 'rgba(37, 99, 235, 0.25)');
+                grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, w, 48);
+            } else if (state.autoScrollVel.y > 0) {
+                const grad = ctx.createLinearGradient(0, h, 0, h - 48);
+                grad.addColorStop(0, 'rgba(37, 99, 235, 0.25)');
+                grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, h - 48, w, 48);
+            }
+            ctx.restore();
+        }
+
+        // ==========================================
+        // UIコントロール・イベントバインディング
+        // ==========================================
+        function setTool(toolName) {
+            state.tool = toolName;
+            state.hoveredStrokeIds.clear();
+            if (toolName !== 'lasso') {
+                clearSelection();
+            }
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                if (btn.dataset.tool === toolName) {
+                    btn.className = 'tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all bg-blue-600 text-white shadow-sm';
+                } else {
+                    btn.className = 'tool-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-white/80 transition-all';
+                }
+            });
+            updateCursor();
+            render();
+        }
+
+        function updateCursor() {
+            if (state.isSpacePressed || state.tool === 'pan') {
+                canvas.style.cursor = 'grab';
+            } else if (state.tool === 'pen') {
+                canvas.style.cursor = 'crosshair';
+            } else if (state.tool === 'eraser') {
+                canvas.style.cursor = 'cell';
+            } else if (state.tool === 'lasso') {
+                canvas.style.cursor = 'crosshair';
+            }
+        }
+
+        function setPenColor(color, shouldSave = true) {
+            state.penColor = color;
+            document.getElementById('custom-color-input').value = color;
+            document.querySelectorAll('.color-btn').forEach(btn => {
+                if (btn.dataset.color.toLowerCase() === color.toLowerCase()) {
+                    btn.classList.add('ring-2', 'ring-offset-2', 'ring-blue-500', 'scale-110');
+                } else {
+                    btn.classList.remove('ring-2', 'ring-offset-2', 'ring-blue-500', 'scale-110');
+                }
+            });
+            if (state.tool !== 'pen' && shouldSave) {
+                setTool('pen');
+            }
+            if (shouldSave) saveToIndexedDB();
+        }
+
+        function setPenSize(size, shouldSave = true) {
+            state.penSize = Number(size);
+            document.querySelectorAll('.size-btn').forEach(btn => {
+                if (Number(btn.dataset.size) === state.penSize) {
+                    btn.className = 'size-btn w-7 h-7 rounded-lg flex items-center justify-center bg-white shadow-sm transition-all';
+                } else {
+                    btn.className = 'size-btn w-7 h-7 rounded-lg flex items-center justify-center hover:bg-white transition-all';
+                }
+            });
+            if (state.tool !== 'pen' && shouldSave) {
+                setTool('pen');
+            }
+            if (shouldSave) saveToIndexedDB();
+        }
+
+        document.querySelectorAll('.tool-btn').forEach(btn => {
+            btn.addEventListener('click', () => setTool(btn.dataset.tool));
+        });
+
+        document.querySelectorAll('.color-btn').forEach(btn => {
+            btn.addEventListener('click', () => setPenColor(btn.dataset.color));
+        });
+        document.getElementById('custom-color-input').addEventListener('input', (e) => {
+            setPenColor(e.target.value);
+        });
+        document.querySelectorAll('.size-btn').forEach(btn => {
+            btn.addEventListener('click', () => setPenSize(btn.dataset.size));
+        });
+
+        document.getElementById('btn-undo').addEventListener('click', undo);
+        document.getElementById('btn-redo').addEventListener('click', redo);
+
+        document.getElementById('btn-bg-toggle').addEventListener('click', () => {
+            const order = ['grid', 'dots', 'blank'];
+            const labels = { grid: '背景：方眼グリッド', dots: '背景：ドット', blank: '背景：無地' };
+            const next = order[(order.indexOf(state.bgPattern) + 1) % order.length];
+            state.bgPattern = next;
+            saveToIndexedDB();
+            render();
+            showToast(labels[next]);
+        });
+
+        document.getElementById('btn-delete-selection').addEventListener('click', deleteSelectedStrokes);
+        document.getElementById('btn-duplicate-selection').addEventListener('click', duplicateSelectedStrokes);
+        document.querySelectorAll('.sel-color-btn').forEach(btn => {
+            btn.addEventListener('click', () => changeSelectedColor(btn.dataset.selColor));
+        });
+
+        document.getElementById('btn-zoom-in').addEventListener('click', () => {
+            zoomAtScreenPoint(window.innerWidth / 2, window.innerHeight / 2, state.camera.zoom * 1.25);
+        });
+        document.getElementById('btn-zoom-out').addEventListener('click', () => {
+            zoomAtScreenPoint(window.innerWidth / 2, window.innerHeight / 2, state.camera.zoom / 1.25);
+        });
+        document.getElementById('btn-zoom-reset').addEventListener('click', () => {
+            state.camera = { x: 0, y: 0, zoom: 1 };
+            updateZoomDisplay();
+            positionSelectionToolbar();
+            saveToIndexedDB();
+            render();
+            showToast('表示倍率と位置をリセットしました');
+        });
+      // ==========================================
+        // 保存・書き出し・読み込み・全消去モーダル
+        // ==========================================
+        const menuModal = document.getElementById('menu-modal');
+        document.getElementById('btn-menu').addEventListener('click', () => {
+            // 現在の保存データ量と本数を計算して表示
+            document.getElementById('stats-stroke-count').textContent = state.strokes.length.toLocaleString();
+            const approxBytes = JSON.stringify(packStrokesForStorage(state.strokes)).length;
+            const kb = (approxBytes / 1024).toFixed(1);
+            document.getElementById('stats-data-size').textContent = `${kb} KB`;
+            menuModal.classList.remove('hidden');
+        });
+        document.getElementById('close-menu-modal').addEventListener('click', () => menuModal.classList.add('hidden'));
+        menuModal.addEventListener('click', (e) => {
+            if (e.target === menuModal) menuModal.classList.add('hidden');
+        });
+
+        // PNG画像エクスポート
+        document.getElementById('btn-export-png').addEventListener('click', () => {
+            if (state.strokes.length === 0) {
+                showToast('書き出す線がありません');
+                return;
+            }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const s of state.strokes) {
+                const pad = s.size;
+                if (s.bbox.minX - pad < minX) minX = s.bbox.minX - pad;
+                if (s.bbox.minY - pad < minY) minY = s.bbox.minY - pad;
+                if (s.bbox.maxX + pad > maxX) maxX = s.bbox.maxX + pad;
+                if (s.bbox.maxY + pad > maxY) maxY = s.bbox.maxY + pad;
+            }
+            const margin = 40;
+            const width = Math.ceil(maxX - minX + margin * 2);
+            const height = Math.ceil(maxY - minY + margin * 2);
+
+            const exportCanvas = document.createElement('canvas');
+            const scale = 2;
+            exportCanvas.width = width * scale;
+            exportCanvas.height = height * scale;
+            const eCtx = exportCanvas.getContext('2d');
+            eCtx.scale(scale, scale);
+
+            eCtx.fillStyle = '#ffffff';
+            eCtx.fillRect(0, 0, width, height);
+
+            eCtx.translate(-minX + margin, -minY + margin);
+            for (const s of state.strokes) {
+                drawSingleStroke(eCtx, s, false, false);
+            }
+
+            const link = document.createElement('a');
+            link.download = `infinite-note-${new Date().toISOString().slice(0, 10)}.png`;
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+            menuModal.classList.add('hidden');
+            showToast('PNG画像をダウンロードしました');
+        });
+
+        // JSONバックアップ出力
+        document.getElementById('btn-export-json').addEventListener('click', () => {
+            const payload = {
+                app: 'InfiniteNote',
+                version: 2,
+                exportedAt: new Date().toISOString(),
+                packedStrokes: packStrokesForStorage(state.strokes),
+                camera: state.camera,
+                bgPattern: state.bgPattern
+            };
+            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = `infinite-note-backup-${new Date().toISOString().slice(0, 10)}.json`;
+            link.href = url;
+            link.click();
+            URL.revokeObjectURL(url);
+            menuModal.classList.add('hidden');
+            showToast('JSONバックアップを保存しました');
+        });
+// JSONバックアップ復元
+        document.getElementById('input-import-json').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    if (Array.isArray(data.packedStrokes)) {
+                        state.strokes = unpackStrokesFromStorage(data.packedStrokes);
+                    } else if (Array.isArray(data.strokes)) {
+                        state.strokes = unpackStrokesFromStorage(data.strokes);
+                    } else {
+                        showToast('無効なファイル形式です');
+                        return;
+                    }
+                    if (data.camera) state.camera = data.camera;
+                    if (data.bgPattern) state.bgPattern = data.bgPattern;
+                    clearSelection();
+                    pushHistory();
+                    updateZoomDisplay();
+                    render();
+                    menuModal.classList.add('hidden');
+                    showToast('バックアップデータを復元しました');
+                } catch (err) {
+                    showToast('ファイルの読み込みに失敗しました');
+                }
+                e.target.value = '';
+            };
+            reader.readAsText(file);
+        });
+
+        // 全消去確認モーダル
+        const confirmModal = document.getElementById('confirm-modal');
+        document.getElementById('btn-clear-canvas').addEventListener('click', () => {
+            menuModal.classList.add('hidden');
+            document.getElementById('confirm-title').textContent = 'キャンバスを全消去';
+            document.getElementById('confirm-message').textContent = '現在描かれているすべての線を消去しますか？（「元に戻す」ボタンで復元することも可能です）';
+            confirmModal.classList.remove('hidden');
+        });
+        document.getElementById('confirm-cancel').addEventListener('click', () => confirmModal.classList.add('hidden'));
+        document.getElementById('confirm-ok').addEventListener('click', () => {
+            state.strokes = [];
+            clearSelection();
+            pushHistory();
+            render();
+            confirmModal.classList.add('hidden');
+            showToast('キャンバスをすべて消去しました');
+        });
+// ==========================================
+        // キーボードショートカット
+        // ==========================================
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+
+            if (e.code === 'Space' && !state.isSpacePressed) {
+                state.isSpacePressed = true;
+                updateCursor();
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                if (e.shiftKey) redo();
+                else undo();
+            } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                e.preventDefault();
+                redo();
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (state.selectedIds.size > 0) {
+                    e.preventDefault();
+                    deleteSelectedStrokes();
+                }
+            } else if (e.key === 'Escape') {
+                clearSelection();
+                menuModal.classList.add('hidden');
+                confirmModal.classList.add('hidden');
+                render();
+            } else if (e.key.toLowerCase() === 'm') {
+                setToolbarVisibility(!state.isToolbarVisible, false);
+            } else if (e.key.toLowerCase() === 'p') {
+                setTool('pen');
+            } else if (e.key.toLowerCase() === 'e') {
+                setTool('eraser');
+            } else if (e.key.toLowerCase() === 'l') {
+                setTool('lasso');
+            } else if (e.key.toLowerCase() === 'h') {
+                setTool('pan');
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                state.isSpacePressed = false;
+                state.panLastScreen = null;
+                updateCursor();
+            }
+        });
+
+        let toastTimer = null;
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.remove('hidden', 'toast-enter');
+            void toast.offsetWidth;
+            toast.classList.add('toast-enter');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 2200);
+        }
+
+        // アプリ起動時の初期化
+        window.addEventListener('load', async () => {
+            await loadFromStorage();
+            resizeCanvas();
+        });
+    </script>
+</body>
+</html>
